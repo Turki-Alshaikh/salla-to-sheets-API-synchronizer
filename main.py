@@ -6,7 +6,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 
 def sync_salla_feed():
-    # 1. إعداد الاتصال بجوجل شيت باستخدام بيانات الاعتماد
+    # 1. إعداد الاتصال بجوجل شيت
     scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     creds_json = json.loads(os.environ['GCP_CREDENTIALS'])
     creds = Credentials.from_service_account_info(creds_json, scopes=scope)
@@ -22,17 +22,15 @@ def sync_salla_feed():
     try:
         response = requests.get(url, headers=headers, timeout=15)
         response.raise_for_status()
-        xml_content = response.text # قراءة النص الخام
+        xml_content = response.text
     except Exception as e:
         print(f"حدث خطأ أثناء جلب الرابط: {e}")
         return
 
-    # 3. تحليل البيانات باستخدام التعابير النمطية (Regex) لتفادي أي أخطاء في الـ XML
+    # 3. تحليل البيانات وتنظيفها
     data = []
-    # كتابة العناوين الأساسية
     data.append(["اسم المنتج", "وصف المنتج", "رابط المنتج", "رابط الصورة", "السعر", "التوفر", "نوع المنتج"])
 
-    # تقسيم الملف إلى عناصر (items)
     items = re.findall(r'<item>(.*?)</item>', xml_content, re.DOTALL)
     
     for item in items:
@@ -41,22 +39,25 @@ def sync_salla_feed():
         if not title_match: title_match = re.search(r'<title>(.*?)</title>', item)
         title = title_match.group(1).strip() if title_match else ""
         
-        # استخراج الوصف
+        # استخراج الوصف وتنظيفه
         desc_match = re.search(r'<g:description>(.*?)</g:description>', item, re.DOTALL)
         if not desc_match: desc_match = re.search(r'<description>(.*?)</description>', item, re.DOTALL)
         description = desc_match.group(1) if desc_match else ""
-        # تنظيف الوصف من أي أكواد برمجية (مثل CDATA أو HTML)
         description = description.replace('<![CDATA[', '').replace(']]>', '')
         description = re.sub(r'<[^>]+>', '', description).strip()
         
-        # استخراج الرابط
+        # استخراج الرابط وتنظيفه من الزوائد (إزالة ما بعد ?)
         link_match = re.search(r'<g:link>(.*?)</g:link>', item)
         if not link_match: link_match = re.search(r'<link>(.*?)</link>', item)
         link = link_match.group(1).strip() if link_match else ""
+        if link:
+            link = link.split('?')[0] # هذا السطر هو الذي يجعل الرابط نظيفاً
         
-        # استخراج الصورة
+        # استخراج الصورة وتنظيف الرابط الخاص بها أيضاً إن وجد
         image_match = re.search(r'<g:image_link>(.*?)</g:image_link>', item)
         image_link = image_match.group(1).strip() if image_match else ""
+        if image_link:
+            image_link = image_link.split('?')[0]
         
         # استخراج السعر
         price_match = re.search(r'<g:price>(.*?)</g:price>', item)
@@ -74,9 +75,9 @@ def sync_salla_feed():
 
     # 4. تحديث الجدول
     if len(data) > 1:
-        sheet.clear() # مسح البيانات القديمة بالكامل
-        sheet.update(range_name='A1', values=data) # حقن البيانات الجديدة
-        print(f"تم التحديث بنجاح! تم إدراج {len(data) - 1} منتج في الجدول بشكل دقيق.")
+        sheet.clear()
+        sheet.update(range_name='A1', values=data)
+        print(f"تم التحديث بنجاح! تم إدراج {len(data) - 1} منتج في الجدول بروابط نظيفة.")
     else:
         print("لم يتم العثور على أي منتجات في الملف.")
 
